@@ -142,7 +142,7 @@ class ModalEnvironment(BaseEnvironment):
         # external services but can't modify the host's credentials.
         cred_mounts = []
         try:
-            from tools.credential_files import get_credential_file_mounts
+            from tools.credential_files import get_credential_file_mounts, iter_skills_files
 
             for mount_entry in get_credential_file_mounts():
                 cred_mounts.append(
@@ -156,6 +156,18 @@ class ModalEnvironment(BaseEnvironment):
                     mount_entry["host_path"],
                     mount_entry["container_path"],
                 )
+
+            # Mount individual skill files (symlinks filtered out).
+            skills_files = iter_skills_files()
+            for entry in skills_files:
+                cred_mounts.append(
+                    _modal.Mount.from_local_file(
+                        entry["host_path"],
+                        remote_path=entry["container_path"],
+                    )
+                )
+            if skills_files:
+                logger.info("Modal: mounting %d skill files", len(skills_files))
         except Exception as e:
             logger.debug("Modal: could not load credential file mounts: %s", e)
 

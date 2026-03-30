@@ -113,6 +113,9 @@ class DaytonaEnvironment(BaseEnvironment):
             logger.info("Daytona: created sandbox %s for task %s",
                         self._sandbox.id, task_id)
 
+        # Upload credential files and skills directory into the sandbox.
+        self._sync_skills_and_credentials()
+
         # Resolve cwd: detect actual home dir inside the sandbox
         if self._requested_cwd in ("~", "/home/daytona"):
             try:
@@ -122,6 +125,47 @@ class DaytonaEnvironment(BaseEnvironment):
             except Exception:
                 pass  # leave cwd as-is; sandbox will use its own default
             logger.info("Daytona: resolved cwd to %s", self.cwd)
+
+    def _sync_skills_and_credentials(self) -> None:
+        """Upload credential files and skills directory into the Daytona sandbox."""
+        try:
+            from tools.credential_files import get_credential_file_mounts, get_skills_directory_mount
+
+            # Upload individual credential files
+            for mount_entry in get_credential_file_mounts():
+                try:
+                    container_path = mount_entry["container_path"]
+                    # Ensure parent directory exists
+                    parent = str(Path(container_path).parent)
+                    self._sandbox.process.exec(f"mkdir -p {parent}")
+                    self._sandbox.fs.upload_file(mount_entry["host_path"], container_path)
+                    logger.info(
+                        "Daytona: uploaded credential %s -> %s",
+                        mount_entry["host_path"],
+                        container_path,
+                    )
+                except Exception as e:
+                    logger.debug("Daytona: credential upload failed for %s: %s", mount_entry["host_path"], e)
+
+            # Upload skills files (symlinks filtered out by iter_skills_files)
+            from tools.credential_files import iter_skills_files
+
+            skills_files = iter_skills_files()
+            if skills_files:
+                created_dirs: set = set()
+                for entry in skills_files:
+                    remote_path = entry["container_path"]
+                    remote_parent = str(Path(remote_path).parent)
+                    try:
+                        if remote_parent not in created_dirs:
+                            self._sandbox.process.exec(f"mkdir -p {remote_parent}")
+                            created_dirs.add(remote_parent)
+                        self._sandbox.fs.upload_file(entry["host_path"], remote_path)
+                    except Exception as e:
+                        logger.debug("Daytona: skill file upload failed %s: %s", entry["host_path"], e)
+                logger.info("Daytona: uploaded %d skill files", len(skills_files))
+        except Exception as e:
+            logger.debug("Daytona: could not sync skills/credentials: %s", e)
 
     def _ensure_sandbox_ready(self):
         """Restart sandbox if it was stopped (e.g., by a previous interrupt)."""
